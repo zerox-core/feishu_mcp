@@ -95,6 +95,9 @@ function spawnNode(reason) {
   child.on('error', (e) => { say(`node spawn error: ${e.message}`); nodeChild = null; });
   child.on('exit', (code, sig) => {
     say(`node exited code=${code} sig=${sig}`);
+    // restartNode 主动击杀旧 node 时会先置空 nodeChild 再自行拉起；
+    // 若 exit 回调属于旧 child，绝不能再排期重生，否则与 restartNode 双拉起抢 3000 端口
+    if (nodeChild !== child) return;
     nodeChild = null;
     if (!shuttingDown) scheduleNodeRespawn('exit');
   });
@@ -174,10 +177,14 @@ async function queueProbe() {
   try {
     await post({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'supervisor', version: '1' } } });
     await post({ jsonrpc: '2.0', method: 'notifications/initialized' });
-    const raw = await post({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'execute_command', arguments: { command: 'echo supervisor-probe', workdir: 'F:\\feishu_mcp' } } });
+    // 探针命令必须在只读白名单内（commandPolicy SAFE_ZERO_TARGET），否则会被审批门
+    // 拦在并发车道之前秒回 CLIENT_ELICITATION_UNSUPPORTED，探针永远测不到车道堵塞
+    // （2026-09-10 P7：旧探针用 echo，队列堵死时看门狗零动作）
+    const raw = await post({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'execute_command', arguments: { command: 'whoami', workdir: 'F:\\feishu_mcp' } } });
     const res = sseParse(raw);
     const text = (res && res.result && res.result.content && res.result.content[0] && res.result.content[0].text) || '';
     if (text.includes('QUEUE_TIMEOUT')) throw new Error('QUEUE_TIMEOUT');
+    if (!text.includes('"ok":true')) say(`queue probe anomaly (not counted): ${text.slice(0, 120)}`);
     queueFails = 0;
   } catch (e) {
     queueFails++;
