@@ -5,6 +5,7 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import {
   COMMAND_MAX_OUTPUT_BYTES,
   COMMAND_MAX_TIMEOUT_MS,
+  COMMAND_PREAPPROVED_EXECUTABLES,
   COMMAND_TIMEOUT_MS,
   GIT_COMMAND_POLICY,
   OWNER_COMMAND_POLICY,
@@ -65,6 +66,8 @@ export async function executeCommand(
     return toolError("INVALID_ARGUMENT", "The working directory does not exist or is not a directory.");
   }
   const timeoutMs = Math.min(args.timeout ?? COMMAND_TIMEOUT_MS, COMMAND_MAX_TIMEOUT_MS);
+  const commandPreapproved = risk.executable != null &&
+    COMMAND_PREAPPROVED_EXECUTABLES.includes(risk.executable);
   const userId = getRequestUserId();
   const { confirmationToken: _confirmationToken, ...approvalArgs } = args;
   const softGit = GIT_COMMAND_POLICY === "soft_owner" &&
@@ -95,19 +98,24 @@ export async function executeCommand(
       digest: commandSubject(risk.normalized, workdir),
     });
   } else if (!softGit && risk.level === "approval_required" && !ownerDirect) {
-    const approval = await requestApproval(ctx, {
-      tool: "execute_command",
-      userId,
-      subject: {
-        kind: "command",
-        key: commandSubject(risk.normalized, workdir),
-        display: `${risk.normalized}\nWorking directory: ${workdir}`,
-      },
-      argsDigest: digestArguments(approvalArgs),
-      reasons: risk.reasons,
-      authorizedDirectoryRootsDigest: workdirGuard.directoryProof?.rootsDigest,
-    });
-    if (approval !== true) return approval;
+    // Operator pre-approval (COMMAND_PREAPPROVED_EXE): the first executable token is
+    // whitelisted and no shell metacharacters were detected (executable === null otherwise),
+    // so the fixed single command runs without the interactive Feishu approval card.
+    if (!commandPreapproved) {
+      const approval = await requestApproval(ctx, {
+        tool: "execute_command",
+        userId,
+        subject: {
+          kind: "command",
+          key: commandSubject(risk.normalized, workdir),
+          display: `${risk.normalized}\nWorking directory: ${workdir}`,
+        },
+        argsDigest: digestArguments(approvalArgs),
+        reasons: risk.reasons,
+        authorizedDirectoryRootsDigest: workdirGuard.directoryProof?.rootsDigest,
+      });
+      if (approval !== true) return approval;
+    }
   }
   return runTool(
     {
@@ -132,7 +140,7 @@ export async function executeCommand(
           GIT_EXTERNAL_DIFF: "",
         },
       });
-      return toolJson({ ok: true, risk: risk.level, ...result });
+      return toolJson({ ok: true, risk: risk.level, commandPreapproved, ...result });
     },
   );
 }

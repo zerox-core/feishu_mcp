@@ -3,6 +3,8 @@ export interface CommandRisk {
   reasons: string[];
   normalized: string;
   gitCategory?: "ordinary" | "confirmation_required";
+  /** Base name of the first executable token; null when unparsable or shell metacharacters are present. */
+  executable?: string | null;
 }
 
 const SAFE_ZERO_TARGET = new Set(["whoami", "hostname", "cd", "pwd"]);
@@ -72,25 +74,26 @@ export function classifyCommand(command: string): CommandRisk {
       level: "approval_required",
       reasons: ["Shell operators, redirection, substitution, or multiple commands were detected."],
       normalized,
+      executable: null,
     };
   }
   const tokens = tokenize(normalized);
   if (!tokens?.length) {
-    return { level: "approval_required", reasons: ["The complete command could not be parsed safely."], normalized };
+    return { level: "approval_required", reasons: ["The complete command could not be parsed safely."], normalized, executable: null };
   }
   const executable = baseName(tokens[0]);
   if (ALWAYS_APPROVE.has(executable)) {
-    return { level: "approval_required", reasons: [`${executable} can execute or modify local state.`], normalized };
+    return { level: "approval_required", reasons: [`${executable} can execute or modify local state.`], normalized, executable };
   }
   if (SAFE_ZERO_TARGET.has(executable) && tokens.length === 1) {
-    return { level: "read_only", reasons: [], normalized };
+    return { level: "read_only", reasons: [], normalized, executable };
   }
   if (executable === "dir" && tokens.slice(1).every((token) => /^\/[a-z]+(?::[^\\/]*)?$/i.test(token))) {
-    return { level: "read_only", reasons: [], normalized };
+    return { level: "read_only", reasons: [], normalized, executable };
   }
   if (executable === "git" || executable === "git.exe") {
     reasons.push("Git configuration can invoke local helpers; use the dedicated Git tools for automatic read-only access.");
-    return { level: "approval_required", reasons, normalized, gitCategory: gitCategory(tokens) };
+    return { level: "approval_required", reasons, normalized, gitCategory: gitCategory(tokens), executable };
   } else if (executable === "rg" || executable === "rg.exe" || executable === "ripgrep") {
     reasons.push("Command-line search paths can escape the allowed directory; use search_content for automatic access.");
   } else if (executable === "findstr" || executable === "findstr.exe") {
@@ -100,5 +103,5 @@ export function classifyCommand(command: string): CommandRisk {
   } else {
     reasons.push("The executable is not on the strict read-only allowlist.");
   }
-  return { level: "approval_required", reasons, normalized };
+  return { level: "approval_required", reasons, normalized, executable };
 }

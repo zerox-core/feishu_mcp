@@ -96,6 +96,16 @@ export const COMMAND_TIMEOUT_MS = envBoundedPositiveInt(
 export const COMMAND_MAX_TIMEOUT_MS = envBoundedPositiveInt(
   "COMMAND_MAX_TIMEOUT_MS", 300_000, MAX_TIMEOUT_MS
 );
+
+/**
+ * Operator-configured command pre-approval: executables listed here skip the
+ * Feishu approval flow for ALL callers (still subject to directory confinement,
+ * timeouts, output limits, and shell-metacharacter rejection). Empty by default.
+ */
+export const COMMAND_PREAPPROVED_EXECUTABLES: readonly string[] = (process.env.COMMAND_PREAPPROVED_EXE ?? "")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter((value) => /^[a-z0-9._-]{1,64}$/.test(value));
 export const COMMAND_MAX_OUTPUT_BYTES = envBoundedPositiveInt(
   "COMMAND_MAX_OUTPUT_BYTES", 1_048_576, MAX_RESPONSE_BYTES
 );
